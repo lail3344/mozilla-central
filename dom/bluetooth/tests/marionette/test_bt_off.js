@@ -5,7 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 MARIONETTE_TIMEOUT = 100000;
-var BT_TIMEOUT = 3000;
+var kBTTimeout = 3000;
 var result;
 
 SpecialPowers.addPermission("bluetooth", true, document);
@@ -26,7 +26,7 @@ SpecialPowers.addPermission("settings-write", true, document);
 var settings = window.navigator.mozSettings;
 isnot(settings, null, "Settings should not be null");
 
-var turnBTOnOff = function (on) {
+function turnBTOnOff(on) {
   result = undefined;
   log("Turning BT off...");
   var req = settings.createLock().set({'bluetooth.enabled': false});
@@ -34,11 +34,20 @@ var turnBTOnOff = function (on) {
     ok(false, "callback 'onerror' should never be called");
     result = req.error;
   }
-};
+}
 
 function checkResult() {
-  //log("checking state...");
-  return result;
+  //log("checking state: " + result);
+  return result !== undefined;
+}
+
+function setQemuResult(results) {
+  result = results[0];
+}
+
+function getBTProp(prop) {
+  result = undefined;
+  runEmulatorCmd("bt get " + prop, setQemuResult);
 }
 
 function makeTest() {
@@ -47,20 +56,27 @@ function makeTest() {
       ok(false, "BT fail to disable. error: " + result.name);
     } else {
       is(bt.enabled, false, "BT should be disabled now");
+      // outsider check
+      getBTProp("name", setQemuResult);
+      waitFor(
+        function () {
+          is(result, "", "BT should be disabled");
+          finish();
+        }, checkResult, kBTTimeout);
     }
-    finish();
   };
-};
+}
 
 if (bt.enabled) {
   turnBTOnOff(false);
-  waitFor(makeTest(), checkResult, BT_TIMEOUT);
+  waitFor(makeTest(), checkResult, kBTTimeout);
 } else {
   turnBTOnOff(false);
   setTimeout(
     function () {
+      log("BT already turned off!");
       is(result, undefined, "Disabling BT when it's already off shouldn't invoke callbacks");
       is(bt.enabled, false, "Disabling BT when it's already off shouldn't change state");
       finish();
-    }, BT_TIMEOUT);
+    }, kBTTimeout);
 }
