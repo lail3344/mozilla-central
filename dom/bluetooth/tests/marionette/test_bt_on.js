@@ -18,10 +18,12 @@ bt.onenabled = function () {
 
 bt.ondisabled = function () {
   ok(false, "callback 'ondisabled' should not be called when turning on BT");
+  result = "disabled";
 };
 
 bt.onadapteradded = function () {
   log("Adapter found");
+  result = "adapter found";
 };
 
 // BT on/off must be through settings
@@ -41,12 +43,13 @@ function turnBTOnOff(on) {
 }
 
 function checkResult() {
-  //log("checking state: " + result);
+  log("checking state: " + result);
   return result !== undefined;
 }
 
 function setQemuResult(results) {
   result = results[0];
+  log("QEMU: " + result);
 }
 
 function getBTProp(prop) {
@@ -54,26 +57,36 @@ function getBTProp(prop) {
   runEmulatorCmd("bt get " + prop, setQemuResult);
 }
 
-function makeTest() {
+function makeTest(tester) {
   return function () {
     if (result instanceof DOMError) {
       ok(false, "BT fail to enable. error: " + result.name);
     } else {
-      is(bt.enabled, true, "BT should be enabled now");
-      // outsider check
-      getBTProp("name", setQemuResult);
-      waitFor(
-        function () {
-          isnot(result, "", "BT should be disabled");
-          finish();
-        }, checkResult, kBTTimeout);
+      tester? tester():finish();
     }
   };
 };
 
+function checkEnabled() {
+  is(bt.enabled, true, "BT should be enabled now");
+  // wait for adapter found callback, then check
+  result = undefined;
+  waitFor(makeTest(checkAdapter), checkResult, kBTTimeout);
+}
+
+function checkAdapter() {
+  getBTProp("name", setQemuResult);
+  waitFor(
+    function () {
+      //isnot(result, "", "BT adatper should have name");
+      finish();
+    }, checkResult, kBTTimeout);
+}
+
 if (!bt.enabled) {
   turnBTOnOff(true);
-  waitFor(makeTest(), checkResult, kBTTimeout);
+  // wait for enabled callback, then check
+  waitFor(makeTest(checkEnabled), checkResult, kBTTimeout);
 } else {
   turnBTOnOff(true);
   setTimeout(

@@ -10,7 +10,6 @@ var kQemuTimeout = 3000;
 
 var kBDAddress = "56:34:12:00:54:52";
 var kName = "Full Android on Emulator";
-var kChangedName = kName + " - changed";
 
 SpecialPowers.addPermission("bluetooth", true, document);
 
@@ -47,21 +46,47 @@ function makeMatchFunc(prop, expect, callback) {
   };
 };
 
+function changeDiscoverable(adapter) {
+  is(adapter.discoverable, false, "BT should not be discoverable");
+  log("set discoverable: true");
+  adapter.setDiscoverable(true);
+  setTimeout(function () {
+    log("changed discoverable: " + adapter.discoverable);
+    is(adapter.discoverable, true, "BT should be discoverable now");
+    (makeMatchFunc("discoverable", adapter.discoverable, function() {
+        finish();
+      }))();
+  }, kQemuTimeout);
+};
+
+
+function changeName(adapter) {
+  var newName = adapter.name + " - changed";
+  var r = adapter.setName(newName);
+  log("set name: " + newName);
+  r.onsuccess = function () {
+    log("changed name: " + adapter.name);
+    is(adapter.name, newName);
+    // outsider check
+    (makeMatchFunc("name", adapter.name, function () {
+        changeDiscoverable(adapter);
+      }))();
+  };
+  r.onerror = function () {
+    ok(false, "Set adapter name shouldn't fail");
+    finish();
+  }
+};
+
 ok(req, "BT cannot get adapter");
 req.onsuccess = function () {
   var adapter = req.result;
   isnot(adapter, null, "BT should not be null");
-
-  ok(adapter instanceof BluetoothAdapter, "BT adapter interface should be BluetoothAdapter");
-  is(adapter.address, kBDAddress, "BD address not match");
+  // before changes
   is(adapter.name, kName, "Name not match");
   is(adapter.discoverable, false, "attr 'discoverable' not match");
-  is(adapter.discovering, false, "attr 'discovering' not match");
-  // outsider check
-  (makeMatchFunc("addr", adapter.address,
-    makeMatchFunc("name", adapter.name,
-      makeMatchFunc("discoverable", adapter.discoverable? 1:0,
-        makeMatchFunc("discovering", adapter.discoverying? 1:0)))))();
+  // change name
+  changeName(adapter);
 };
 
 req.onerror = function () {
