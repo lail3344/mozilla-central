@@ -6,48 +6,50 @@
 
 MARIONETTE_TIMEOUT = 10000;
 
-var tester = getTester();
-
 SpecialPowers.addPermission("bluetooth", true, document);
 
 var req = window.navigator.mozBluetooth.getDefaultAdapter();
+var tester = getTester();
 
-function makeMatchFunc(prop, expect, callback) {
+function getMatchFunc(prop, expect) {
   return function () {
     tester.getBTProp(prop);
     waitFor(
       function () {
         log(prop + " - expect: " + expect + ", result: " + tester.get());
         is(expect, tester.get(), prop + " not match");
-        if (callback) {
-          callback();
-        } else {
-          finish();        
-        }
+        finish();        
       }, tester.isSet.bind(tester), kQemuTimeout);
   };
+};
+
+function changeName(adapter) {
+  var newName = adapter.name + " - changed";
+  log("set name to " + newName);
+  var rename = adapter.setName(newName);
+  rename.onsuccess = function () {
+    // after change
+    log("changed name: " + adapter.name);
+    is(adapter.name, newName, "attr 'name' not match");
+    (getMatchFunc("name", newName))();
+  };
+  rename.onerror = function () {
+    ok(false, "BT rename has error: " + rename.error.name);
+  }
 };
 
 ok(req, "BT cannot get adapter");
 req.onsuccess = function () {
   var adapter = req.result;
   isnot(adapter, null, "BT should not be null");
-
-  ok(adapter instanceof BluetoothAdapter, "BT adapter interface should be BluetoothAdapter");
-  is(adapter.address, kBDAddress, "BD address not match");
-  is(adapter.name, kName, "Name not match");
-  is(adapter.discoverable, false, "attr 'discoverable' not match");
-  is(adapter.discovering, false, "attr 'discovering' not match");
-  // outsider check
-  (makeMatchFunc("addr", adapter.address,
-    makeMatchFunc("name", adapter.name,
-      makeMatchFunc("discoverable", adapter.discoverable? 1:0,
-        makeMatchFunc("discovering", adapter.discoverying? 1:0)))))();
+  // before change
+  is(adapter.name, kName, "BT name not match");
+  changeName(adapter);
 };
 
 req.onerror = function () {
   var error = req.error;
-  ok(false, "BT get adapter has error:" + error.name);
+  ok(false, "BT get adapter has error: " + error.name);
   finish();
 };
 

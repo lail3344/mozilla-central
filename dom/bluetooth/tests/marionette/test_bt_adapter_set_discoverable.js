@@ -6,43 +6,42 @@
 
 MARIONETTE_TIMEOUT = 10000;
 
-var tester = getTester();
-
 SpecialPowers.addPermission("bluetooth", true, document);
 
 var req = window.navigator.mozBluetooth.getDefaultAdapter();
+var tester = getTester();
 
-function makeMatchFunc(prop, expect, callback) {
+function makeMatchFunc(prop, expect) {
   return function () {
     tester.getBTProp(prop);
     waitFor(
       function () {
         log(prop + " - expect: " + expect + ", result: " + tester.get());
         is(expect, tester.get(), prop + " not match");
-        if (callback) {
-          callback();
-        } else {
-          finish();        
-        }
+        finish();        
       }, tester.isSet.bind(tester), kQemuTimeout);
   };
+};
+
+function changeDiscoverable(adapter) {
+  log("set discoverable: true");
+  adapter.setDiscoverable(true);
+  // setDiscoverable has no callback... delay before checking.
+  setTimeout(function () {
+    // after change
+    log("changed discoverable: " + adapter.discoverable);
+    is(adapter.discoverable, true, "BT should be discoverable now");
+    (makeMatchFunc("discoverable", adapter.discoverable))();
+  }, kQemuTimeout);
 };
 
 ok(req, "BT cannot get adapter");
 req.onsuccess = function () {
   var adapter = req.result;
   isnot(adapter, null, "BT should not be null");
-
-  ok(adapter instanceof BluetoothAdapter, "BT adapter interface should be BluetoothAdapter");
-  is(adapter.address, kBDAddress, "BD address not match");
-  is(adapter.name, kName, "Name not match");
-  is(adapter.discoverable, false, "attr 'discoverable' not match");
-  is(adapter.discovering, false, "attr 'discovering' not match");
-  // outsider check
-  (makeMatchFunc("addr", adapter.address,
-    makeMatchFunc("name", adapter.name,
-      makeMatchFunc("discoverable", adapter.discoverable? 1:0,
-        makeMatchFunc("discovering", adapter.discoverying? 1:0)))))();
+  // before change
+  is(adapter.discoverable, false, "BT should not be discoverable");
+  changeDiscoverable(adapter);
 };
 
 req.onerror = function () {

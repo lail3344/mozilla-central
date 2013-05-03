@@ -4,9 +4,12 @@ import os
 import string
 
 class TestBTOnOff(MarionetteTestCase):
-    def getJS(self, name):
-        return open(os.path.abspath(os.path.join(__file__, os.path.pardir, name + ".js")), 'r').read()
+    def getJSPath(self, name):
+        return os.path.abspath(os.path.join(__file__, os.path.pardir, name + ".js"))
+    def getJSContent(self, name):
+        return open(self.getJSPath(name), 'r').read()
     def testOnOff(self):
+        self.marionette.import_script(self.getJSPath("bt_test_utils"));
         dev_mgr = mozdevice.DeviceManagerADB()
         # make sure BT is off at first
         dev_mgr._runCmd(["shell", "hciconfig"]).stdout.read()
@@ -39,7 +42,7 @@ class TestBTOnOff(MarionetteTestCase):
         out = dev_mgr._runCmd(["shell", "hciconfig"]).stdout.read()
         self.assertEqual(-1, string.find(out, "BD Address:"))
     def turnOnBT(self):
-        return self.marionette.execute_async_script(self.getJS("test_bt_on"))
+        return self.marionette.execute_async_script(self.getJSContent("test_bt_on"))
     def turnOffBT(self):
-        return self.marionette.execute_async_script(self.getJS("test_bt_off"))
+        return self.marionette.execute_async_script(self.getJSContent("test_bt_off"))
 
