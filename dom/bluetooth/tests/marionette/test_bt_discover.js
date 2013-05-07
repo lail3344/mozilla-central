@@ -11,16 +11,14 @@ SpecialPowers.addPermission("bluetooth", true, document);
 var req = window.navigator.mozBluetooth.getDefaultAdapter();
 var tester = getTester();
 
-function getMatchFunc(prop, expect, next) {
+function getMatchFunc(prop, expect, shouldFinish) {
   return function () {
     tester.getBTProp(prop);
     waitFor(
       function () {
         log(prop + " - expect: '" + expect + "', result: '" + tester.get() + "'");
         is(expect, tester.get(), prop + " not match");
-        if (next && next instanceof Function) {
-          next();
-        } else {
+        if (shouldFinish) {
           finish();
         }
       }, tester.isSet.bind(tester), kQemuTimeout);
@@ -30,21 +28,44 @@ function getMatchFunc(prop, expect, next) {
 ok(req, "BT cannot get adapter");
 req.onsuccess = function () {
   var adapter = req.result;
-  var newName = adapter.name + " - changed";
+  var count = 0;
 
   isnot(adapter, null, "BT should not be null");
-  // before change
-  is(adapter.name, kName, "BT name not match");
-  changeName(adapter, newName,
+
+  log("start discovery");
+  req = adapter.startDiscovery();
+  
+  setTimeout(
     function () {
-      // after change
-      log("changed name: '" + adapter.name + "'");
-      is(adapter.name, newName, "attr 'name' not match");
-      (getMatchFunc("name", newName))();
-    },
-    function () {
-      ok(false, "BT rename has error: " + rename.error.name);
-    });
+      // check attribute
+      is(adapter.discovering, true, "attr 'discovering' should be true");
+      (getMatchFunc("discovering", '1', false))();
+    }, 500);
+
+  adapter.onerror = function () {
+    ok(false, "BT start discovery should never fail");
+    finish();
+  }
+
+  adapter.ondevicefound = function (evt) {
+    var device = evt.device;
+    is(device.address, kFakeRemotes[count].addr, "remote BD address not match");
+    count++;
+    if (count > kFakeRemotes.length) {
+      ok(false, "more device than expected: " + kFakeRemotes.length + ", found: " + count);
+      finish();
+    } else if (count === kFakeRemotes.length) {
+      setTimeout(
+        function () { 
+          log("stop discovery");
+          adapter.stopDiscovery();
+          setTimeout(
+            function () {
+              (getMatchFunc("discovering", '0', true))();
+            }, 1000);
+        }, kQemuTimeout);
+    }
+  };
 };
 
 req.onerror = function () {

@@ -20,7 +20,7 @@ function makeMatchFunc(tester, prop, expect, callback) {
       function () {
         log(prop + " - expect: " + expect + ", result: " + tester.get());
         is(expect, tester.get(), prop + " not match");
-        if (callback) {
+        if (callback && callback instanceof Function) {
           callback();
         } else {
           finish();        
@@ -44,7 +44,8 @@ req1.onsuccess = function () {
   (makeMatchFunc(tester1, "addr", adapter.address,
     makeMatchFunc(tester1, "name", adapter.name,
       makeMatchFunc(tester1, "discoverable", adapter.discoverable? 1:0,
-        makeMatchFunc(tester1, "discovering", adapter.discoverying? 1:0)))))();
+        makeMatchFunc(tester1, "discovering", adapter.discoverying? 1:0,
+          function () { /* dummy callback to prevent early ending */ })))))();
 };
 
 req1.onerror = function () {

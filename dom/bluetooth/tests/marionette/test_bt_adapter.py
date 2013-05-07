@@ -2,7 +2,6 @@ from marionette_test import MarionetteTestCase
 import mozdevice
 import os
 import string
-import re
 
 class TestBTAdapter(MarionetteTestCase):
     def getJSPath(self, name):
@@ -18,18 +17,21 @@ class TestBTAdapter(MarionetteTestCase):
         dev_mgr._runCmd(["shell", "hciconfig"]).stdout.read()
         out = dev_mgr._runCmd(["shell", "hciconfig"]).stdout.read()
         self.assertNotEqual(-1, string.find(out, "BD Address:"))
+        
         # adapter check
         result = self.marionette.execute_async_script(self.getJSContent("test_bt_adapter"))
         self.assertEqual(result["failed"], 0)
-        # multiple intances of adapter
+        # more than 1 adapter intances
         result = self.marionette.execute_async_script(self.getJSContent("test_bt_2adapters"))
         self.assertEqual(result["failed"], 0)
-        # change name, discoverable properties
+        # change name & discoverable properties
         result = self.marionette.execute_async_script(self.getJSContent("test_bt_adapter_set_name"));
         self.assertEqual(result["failed"], 0);
-        result = self.marionette.execute_async_script(self.getJSContent("test_bt_adapter_set_discoverable"));
-        self.assertEqual(result["failed"], 0);
-        # make sure BT is on at the end
+        # TODO: will fail!
+        #result = self.marionette.execute_async_script(self.getJSContent("test_bt_adapter_set_invalid_name"));
+        #self.assertEqual(result["failed"], 0);
+
+        # make sure BT is off at the end        
         result = self.marionette.execute_async_script(self.getJSContent("test_bt_off"))
         self.assertEqual(result["failed"], 0)
 

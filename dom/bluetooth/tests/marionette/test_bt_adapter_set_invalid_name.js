@@ -18,7 +18,7 @@ function getMatchFunc(prop, expect, next) {
       function () {
         log(prop + " - expect: '" + expect + "', result: '" + tester.get() + "'");
         is(expect, tester.get(), prop + " not match");
-        if (next && next instanceof Function) {
+        if (next) {
           next();
         } else {
           finish();
@@ -27,24 +27,44 @@ function getMatchFunc(prop, expect, next) {
   };
 };
 
+function errFunc() {
+  ok(false, "BT set invalid name should never succeed");
+  finish();
+};
+
 ok(req, "BT cannot get adapter");
 req.onsuccess = function () {
   var adapter = req.result;
-  var newName = adapter.name + " - changed";
+  var name = adapter.name;
+
+
+  var checkEmpty = function () {
+    log("check empty name");
+    (getMatchFunc("name", name,
+      // how about null?
+      function () {
+        changeName(adapter, null,
+          errFunc, checkNull);
+      }))();
+  };
+    var checkUndefined = function () {
+    // check undefined
+    (getMatchFunc("name", name))();
+  };
+
+  var checkNull = function () {
+    log("check null name");
+    (getMatchFunc("name", name,
+      // how about undefined?
+      function () {
+        changeName(adapter, undefined,
+          errorFunc, checkUndefined);
+      }))();
+  };
 
   isnot(adapter, null, "BT should not be null");
-  // before change
-  is(adapter.name, kName, "BT name not match");
-  changeName(adapter, newName,
-    function () {
-      // after change
-      log("changed name: '" + adapter.name + "'");
-      is(adapter.name, newName, "attr 'name' not match");
-      (getMatchFunc("name", newName))();
-    },
-    function () {
-      ok(false, "BT rename has error: " + rename.error.name);
-    });
+
+  changeName(adapter, "", errFunc, checkEmpty);
 };
 
 req.onerror = function () {
@@ -52,4 +72,3 @@ req.onerror = function () {
   ok(false, "BT get adapter has error: " + error.name);
   finish();
 };
-

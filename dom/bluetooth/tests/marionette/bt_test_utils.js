@@ -48,3 +48,16 @@ function getTester() {
     }
   };
 };
+
+function changeName(adapter, name, onsuccess, onerror) {
+  log("set name to '" + name + "'");
+  var rename = adapter.setName(name);
+  rename.onsuccess = onsuccess;
+  rename.onerror = onerror;
+};
+
+var kFakeRemotes = [
+  { addr: "00:11:22:33:44:55", name: "fake remote#1" },
+  { addr: "11:22:33:44:55:66", name: "fake remote#2" },
+  { addr: "22:33:44:55:66:77", name: "fake remote#3" }
+];
