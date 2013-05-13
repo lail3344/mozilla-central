@@ -29,15 +29,22 @@ bt.onadapteradded = function () {
 function checkEnabled() {
   is(bt.enabled, true, "BT should be enabled now");
   // wait for adapter found callback, then check
-  tester.clear();
-  waitFor(checkAdapter, tester.isSet.bind(tester), kBTTimeout);
+  var state = tester.get();
+  if (state === "enabled") {
+    tester.clear();
+    waitFor(checkAdapter, tester.isSet.bind(tester), kBTTimeout);
+  } else if (state === "adapter found") { // check adapter immediately because onadapteradded() is already called.
+    checkAdapter();
+  } else {
+    ok(false, "state should be either 'enabled' or 'adapter found' after BT turned on");
+  }
 }
 
 function checkAdapter() {
   tester.getBTProp("name");
   waitFor(
     function () {
-      //isnot(tester.get(), "", "BT adatper should have name");
+      isnot(tester.get(), "", "BT adatper should have name");
       finish();
     },  tester.isSet.bind(tester), kBTTimeout);
 }
@@ -49,7 +56,7 @@ if (!bt.enabled) {
     if (tester.get() instanceof DOMError) {
       ok(false, "BT fail to enable. error: " + tester.get().name);
     } else {
-      checkEnabled();
+      setTimeout(checkEnabled, 500);
     }
     }, tester.isSet.bind(tester), kBTTimeout);
 } else {

@@ -37,9 +37,11 @@ function getTester() {
     getBTProp: function (prop) {
       var that = this;
       that.state = undefined;
+      log("Getting BT " + prop + "...");
       runEmulatorCmd("bt get " + prop,
         function (results) {
           that.state = results[0];
+          log("Got BT " + prop + ": '" + that.state + "'");
         });
     },
     turnBTOnOff: function (on) {
