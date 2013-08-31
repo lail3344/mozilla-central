@@ -6,7 +6,7 @@
 
 MODULE = 'test_mtransport'
 
-if CONFIG['OS_TARGET'] != 'WINNT' and CONFIG['MOZ_WIDGET_TOOLKIT'] != 'gonk':
+if CONFIG['OS_TARGET'] != 'WINNT':
     CPP_UNIT_TESTS += [
         'TestSyncRunnable.cpp',
         'ice_unittest.cpp',

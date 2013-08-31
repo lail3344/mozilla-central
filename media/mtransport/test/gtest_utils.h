@@ -62,8 +62,10 @@
 #define WAIT_(expression, timeout, res)                      \
   do { \
   for (PRIntervalTime start = PR_IntervalNow(); !(res = (expression)) && \
-           ! ((PR_IntervalNow() - start) > PR_MillisecondsToInterval(timeout));) \
+           ! ((PR_IntervalNow() - start) > PR_MillisecondsToInterval(timeout));) { \
     PR_Sleep(10); \
+    NS_ProcessPendingEvents(nullptr); \
+  } \
   } while(0)
 
 #define ASSERT_TRUE_WAIT(expression, timeout) \

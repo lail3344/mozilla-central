@@ -31,6 +31,10 @@
 #include "TestHarness.h"
 #include "mozilla/mozPoisonWrite.h"
 
+#ifdef MOZ_WIDGET_GONK
+#include "private_nils.h"
+#endif
+
 class MtransportTestUtils {
  public:
   MtransportTestUtils() : xpcom_("") {
@@ -44,6 +48,10 @@ class MtransportTestUtils {
   }
 
   void InitServices() {
+#ifdef MOZ_WIDGET_GONK
+    RegisterPrivateNetworkInterfaceListService();
+#endif
+
     nsresult rv;
     ioservice_ = do_GetIOService(&rv);
     MOZ_ASSERT(NS_SUCCEEDED(rv));
