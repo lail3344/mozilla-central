@@ -31,6 +31,9 @@
 #include <sslproto.h>
 #include <algorithm>
 
+// for experiement
+#include <cutils/properties.h>
+
 extern "C" {
 #include "ccsdp.h"
 #include "vcm.h"
@@ -1481,12 +1484,15 @@ static int vcmRxStartICE_m(cc_mcapid_t mcap_id,
       return VCM_ERROR;
 
     mozilla::VideoCodecConfig *config_raw;
-
+    // FIXME: eliminate experimental property
+    char type[32];
+    property_get("webrtc.omx", type, "0");
+    bool forceOMX = (atoi(type) != 0);
     for(int i=0; i <num_payloads; i++)
     {
       config_raw = new mozilla::VideoCodecConfig(
-        payloads[i].remote_rtp_pt,
-        ccsdpCodecName(payloads[i].codec_type),
+        forceOMX? RTP_I420:payloads[i].remote_rtp_pt,
+        ccsdpCodecName(forceOMX? RTP_I420:payloads[i].codec_type),
         payloads[i].video.rtcp_fb_types);
       configs.push_back(config_raw);
     }
@@ -2115,10 +2121,14 @@ static int vcmTxStartICE_m(cc_mcapid_t mcap_id,
     stream->StorePipeline(pc_track_id, pipeline);
 
   } else if (CC_IS_VIDEO(mcap_id)) {
+    // FIXME: eliminate experimental property
+    char type[32];
+    property_get("webrtc.omx", type, "0");
+    bool forceOMX = (atoi(type) != 0);
     mozilla::VideoCodecConfig *config_raw;
     config_raw = new mozilla::VideoCodecConfig(
-      payload->remote_rtp_pt,
-      ccsdpCodecName(payload->codec_type),
+      forceOMX? RTP_I420:payload->remote_rtp_pt,
+      ccsdpCodecName(forceOMX? RTP_I420:payload->codec_type),
       payload->video.rtcp_fb_types);
 
     // Take possession of this pointer

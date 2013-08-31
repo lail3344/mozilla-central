@@ -140,6 +140,20 @@ public:
 
 };
 
+// Abstract base classes for external encoder/decoder.
+class VideoEncoder {
+ public:
+  virtual ~VideoEncoder() {}
+
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(VideoEncoder);
+};
+
+class VideoDecoder {
+ public:
+  virtual ~VideoDecoder() {}
+
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(VideoDecoder);
+};
 
 /**
  * MediaSessionConduit for video
@@ -236,6 +250,22 @@ public:
      /* RTCP feedback settings, for unit testing purposes */
      FrameRequestType mFrameRequestMethod;
      bool mUsingNackBasic;
+
+  /**
+   * Set an external encoder
+   * @param encoder
+   * @result: on success, we will use the specified encoder
+   */
+  virtual MediaConduitErrorCode SetExternalSendCodec(int pltype,
+                VideoEncoder* encoder) = 0;
+
+  /**
+   * Set an external decoder
+   * @param decoder
+   * @result: on success, we will use the specified decoder
+   */
+  virtual MediaConduitErrorCode SetExternalRecvCodec(int pltype,
+                VideoDecoder* decoder) = 0;
 };
 
 /**
