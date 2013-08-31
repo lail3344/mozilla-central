@@ -13,6 +13,11 @@
 #include "AndroidJNIWrapper.h"
 #endif
 
+#include "ExtVideoCodec.h"
+
+// for experiment
+#include <cutils/properties.h>
+
 namespace mozilla {
 
 static const char* logTag ="WebrtcVideoSessionConduit";
@@ -53,6 +58,11 @@ WebrtcVideoConduit::~WebrtcVideoConduit()
     mPtrViECapture->ReleaseCaptureDevice(mCapId);
     mPtrExtCapture = nullptr;
     mPtrViECapture->Release();
+  }
+
+  if (mPtrExtCodec) {
+    mPtrExtCodec->Release();
+    mPtrExtCodec = NULL;
   }
 
   //Deal with External Renderer
@@ -173,6 +183,13 @@ MediaConduitErrorCode WebrtcVideoConduit::Init()
   if( !(mPtrViERender = ViERender::GetInterface(mVideoEngine)))
   {
     CSFLogError(logTag, "%s Unable to get video render interface ", __FUNCTION__);
+    return kMediaConduitSessionNotInited;
+  }
+
+  mPtrExtCodec = webrtc::ViEExternalCodec::GetInterface(mVideoEngine);
+  if (!mPtrExtCodec) {
+    CSFLogError(logTag, "%s Unable to get external codec interface: %d ",
+                __FUNCTION__,mPtrViEBase->LastError());
     return kMediaConduitSessionNotInited;
   }
 
@@ -403,6 +420,12 @@ WebrtcVideoConduit::ConfigureSendMediaCodec(const VideoCodecConfig* codecConfig)
     return kMediaConduitInvalidSendCodec;
   }
 
+  // FIXME
+  if (video_codec.plType == 124) {
+    VideoEncoder* extEncoder = ExtVideoCodec::CreateEncoder();
+    SetExternalSendCodec(124, extEncoder);
+  }
+
   if(mPtrViECodec->SetSendCodec(mChannel, video_codec) == -1)
   {
     error = mPtrViEBase->LastError();
@@ -515,6 +538,12 @@ WebrtcVideoConduit::ConfigureRecvMediaCodecs(
       }
     }//end for codeclist
 
+    // FIXME
+    if (video_codec.plType == 124) {
+      VideoDecoder* extDecoder = mozilla::ExtVideoCodec::CreateDecoder();
+      SetExternalRecvCodec(124, extDecoder);
+    }
+
   }//end for
 
   if(!success)
@@ -584,6 +613,26 @@ WebrtcVideoConduit::SelectSendResolution(unsigned short width,
   return true;
 }
 
+MediaConduitErrorCode
+WebrtcVideoConduit::SetExternalSendCodec(int pltype,
+                                         VideoEncoder* encoder) {
+  mPtrExtCodec->RegisterExternalSendCodec(mChannel,
+                                          pltype,
+                                          static_cast<
+                                          WebrtcVideoEncoder*>(encoder), false);
+
+  return kMediaConduitNoError;
+}
+
+MediaConduitErrorCode
+WebrtcVideoConduit::SetExternalRecvCodec(int pltype,
+                                               VideoDecoder* decoder) {
+  mPtrExtCodec->RegisterExternalReceiveCodec(mChannel,
+                                             pltype,
+                                             static_cast<
+                                             WebrtcVideoDecoder*>(decoder));
+  return kMediaConduitNoError;
+}
 
 MediaConduitErrorCode
 WebrtcVideoConduit::SendVideoFrame(unsigned char* video_frame,
@@ -774,14 +823,18 @@ WebrtcVideoConduit::DeliverFrame(unsigned char* buffer,
 /**
  * Copy the codec passed into Conduit's database
  */
-
 void
 WebrtcVideoConduit::CodecConfigToWebRTCCodec(const VideoCodecConfig* codecInfo,
                                               webrtc::VideoCodec& cinst)
 {
   cinst.plType  = codecInfo->mType;
   // leave width/height alone; they'll be overridden on the first frame
-  cinst.minBitrate = 200;
+
+  // FIXME: eliminate experimental property
+  char min[32];
+  property_get("webrtc.bitrate_min", min, "200");
+  cinst.minBitrate = atoi(min);
+
   cinst.startBitrate = 300;
   cinst.maxBitrate = 2000;
 }

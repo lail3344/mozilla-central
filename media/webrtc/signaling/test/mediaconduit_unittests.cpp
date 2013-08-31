@@ -14,6 +14,7 @@ using namespace std;
 #include <MediaConduitInterface.h>
 #include "nsIEventTarget.h"
 #include "FakeMediaStreamsImpl.h"
+#include "ExtVideoCodec.h"
 
 #define GTEST_HAS_RTTI 0
 #include "gtest/gtest.h"
@@ -388,6 +389,7 @@ public:
         --good;
       }
     }
+
    return 0;
  }
 
@@ -543,7 +545,7 @@ class TransportConduitTest : public ::testing::Test
   }
 
   //2. Dump audio samples to dummy external transport
-  void TestDummyVideoAndTransport()
+  void TestDummyVideoAndTransport(bool send_vp8 = true)
   {
     int err = 0;
     //get pointer to VideoSessionConduit
@@ -581,12 +583,12 @@ class TransportConduitTest : public ::testing::Test
     rcvCodecList.push_back(&cinst1);
     rcvCodecList.push_back(&cinst2);
 
-    err = mVideoSession->ConfigureSendMediaCodec(&cinst1);
+    err = mVideoSession->ConfigureSendMediaCodec(send_vp8 ? &cinst1 : &cinst2);
     ASSERT_EQ(mozilla::kMediaConduitNoError, err);
     err = mVideoSession->ConfigureRecvMediaCodecs(rcvCodecList);
     ASSERT_EQ(mozilla::kMediaConduitNoError, err);
 
-    err = mVideoSession2->ConfigureSendMediaCodec(&cinst1);
+    err = mVideoSession2->ConfigureSendMediaCodec(send_vp8 ? &cinst1 : &cinst2);
     ASSERT_EQ(mozilla::kMediaConduitNoError, err);
     err = mVideoSession2->ConfigureRecvMediaCodecs(rcvCodecList);
     ASSERT_EQ(mozilla::kMediaConduitNoError, err);
@@ -613,7 +615,9 @@ class TransportConduitTest : public ::testing::Test
 
     cerr << "   **************************************************" << endl;
 
-
+    ASSERT_EQ(vidStatsGlobal.numRawFramesInserted,
+              vidStatsGlobal.numFramesRenderedSuccessfully);
+    ASSERT_EQ(0, vidStatsGlobal.numFramesRenderedWrongly);
   }
 
  void TestVideoConduitCodecAPI()
@@ -723,6 +727,9 @@ private:
   mozilla::RefPtr<mozilla::TransportInterface> mVideoTransport;
   VideoSendAndReceive videoTester;
 
+  nsRefPtr<mozilla::VideoEncoder> mExternalEncoder;
+  nsRefPtr<mozilla::VideoDecoder> mExternalDecoder;
+
   std::string fileToPlay;
   std::string fileToRecord;
   std::string iAudiofilename;
@@ -739,6 +746,10 @@ TEST_F(TransportConduitTest, TestDummyAudioWithTransport) {
 TEST_F(TransportConduitTest, TestDummyVideoWithTransport) {
   TestDummyVideoAndTransport();
  }
+
+TEST_F(TransportConduitTest, TestVideoConduitExternalCodec) {
+  TestDummyVideoAndTransport(false);
+}
 
 TEST_F(TransportConduitTest, TestVideoConduitCodecAPI) {
   TestVideoConduitCodecAPI();

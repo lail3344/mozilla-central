@@ -154,6 +154,25 @@ ifneq ($(OS_TARGET),WINNT)
 ifdef JS_SHARED_LIBRARY
 LIBS += $(MOZ_ZLIB_LIBS)
 endif
+ifeq (gonk,$(MOZ_WIDGET_TOOLKIT))
+LIBS += \
+  -lutils -lstagefright -lmedia -lstagefright_omx -lbinder -lui \
+  -lhardware -lcutils \
+  $(NULL)
+LOCAL_INCLUDES += \
+  -I$(topsrcdir)/media/webrtc/trunk \
+  -I$(ANDROID_SOURCE)/dalvik/libnativehelper/include/nativehelper \
+  -I$(ANDROID_SOURCE)/frameworks/base/include/ \
+  -I$(ANDROID_SOURCE)/frameworks/base/include/binder/ \
+  -I$(ANDROID_SOURCE)/frameworks/base/include/utils/ \
+  -I$(ANDROID_SOURCE)/frameworks/base/include/media/ \
+  -I$(ANDROID_SOURCE)/frameworks/base/include/media/stagefright/openmax \
+  -I$(ANDROID_SOURCE)/frameworks/base/media/libstagefright/include \
+  -I$(ANDROID_SOURCE)/frameworks/base/native/include \
+  -I$(ANDROID_SOURCE)/system/core/include \
+  -I$(ANDROID_SOURCE)/hardware/libhardware/include \
+  $(NULL)
+endif
 endif
 
 include $(topsrcdir)/config/config.mk
