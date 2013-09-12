@@ -225,13 +225,20 @@ int32_t ViEExternalRendererImpl::RenderFrame(
     external_renderer_->FrameSizeChange(external_renderer_width_,
                                         external_renderer_height_, stream_id);
   }
-
-  if (out_frame) {
+  // use kVideoIYUV to indicate graphic buffer code path
+  if (external_renderer_format_ == kVideoIYUV) {
+    video_frame.SetGonkBufferInUse(true);
+    external_renderer_->DeliverFrame(static_cast<unsigned char*>(video_frame.GetGonkBuffer()),
+                                     out_frame->Length(),
+                                     video_frame.timestamp(),
+                                     video_frame.render_time_ms());
+  } else if (out_frame) {
     external_renderer_->DeliverFrame(out_frame->Buffer(),
                                      out_frame->Length(),
                                      video_frame.timestamp(),
                                      video_frame.render_time_ms());
   }
+
   return 0;
 }
 

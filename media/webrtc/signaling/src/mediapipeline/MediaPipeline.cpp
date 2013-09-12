@@ -24,6 +24,10 @@
 #include "VideoUtils.h"
 #ifdef MOZ_WIDGET_GONK
 #include "GrallocImages.h"
+#include "cutils/properties.h" // FIXME: remove experimental property
+#undef LOG
+#define LOG_TAG "WebrtcExtVideoCodec"
+#include "utils/Log.h"
 #endif
 #endif
 
@@ -1140,25 +1144,51 @@ void MediaPipelineReceiveVideo::PipelineListener::RenderVideoFrame(
 #endif
   nsRefPtr<layers::Image> image = image_container_->CreateImage(&format, 1);
 
-  layers::PlanarYCbCrImage* videoImage = static_cast<layers::PlanarYCbCrImage*>(image.get());
-  uint8_t* frame = const_cast<uint8_t*>(static_cast<const uint8_t*> (buffer));
-  const uint8_t lumaBpp = 8;
-  const uint8_t chromaBpp = 4;
+#ifdef MOZ_WIDGET_GONK
+  static int omxType = -1;
+  // FIXME: remove experimental property
+  if (omxType < 0) {
+    char omx[32];
+    property_get("webrtc.omx", omx, "0");
+    omxType = atoi(omx);
+  }
+  if (omxType == 3) { // use graphic buffer
+    MOZ_ASSERT(image->GetFormat() == GRALLOC_PLANAR_YCBCR,
+                 "Wrong format?");
+    typedef mozilla::layers::GrallocImage GrallocImage;
+    typedef mozilla::layers::GraphicBufferLocked GraphicBufferLocked;
+    GrallocImage* videoImage = static_cast<GrallocImage*>(image.get());
+    GrallocImage::GrallocData data;
 
-  layers::PlanarYCbCrImage::Data data;
-  data.mYChannel = frame;
-  data.mYSize = gfxIntSize(width_, height_);
-  data.mYStride = width_ * lumaBpp/ 8;
-  data.mCbCrStride = width_ * chromaBpp / 8;
-  data.mCbChannel = frame + height_ * data.mYStride;
-  data.mCrChannel = data.mCbChannel + height_ * data.mCbCrStride / 2;
-  data.mCbCrSize = gfxIntSize(width_/ 2, height_/ 2);
-  data.mPicX = 0;
-  data.mPicY = 0;
-  data.mPicSize = gfxIntSize(width_, height_);
-  data.mStereoMode = STEREO_MODE_MONO;
+    data.mPicSize = gfxIntSize(width_, height_);
+    void* ptr = const_cast<unsigned char*>(buffer);
+    LOGE("MediaPipeline::RenderVideoFrame() y:%p => %p img:%p", buffer, static_cast<GraphicBufferLocked*>(ptr), image.get());
+    data.mGraphicBuffer = static_cast<GraphicBufferLocked*>(ptr);
+    videoImage->SetData(data);
+  } else {
+#else
+  {
+#endif
+    layers::PlanarYCbCrImage* videoImage = static_cast<layers::PlanarYCbCrImage*>(image.get());
+    uint8_t* frame = const_cast<uint8_t*>(static_cast<const uint8_t*> (buffer));
+    const uint8_t lumaBpp = 8;
+    const uint8_t chromaBpp = 4;
 
-  videoImage->SetData(data);
+    layers::PlanarYCbCrImage::Data data;
+    data.mYChannel = frame;
+    data.mYSize = gfxIntSize(width_, height_);
+    data.mYStride = width_ * lumaBpp/ 8;
+    data.mCbCrStride = width_ * chromaBpp / 8;
+    data.mCbChannel = frame + height_ * data.mYStride;
+    data.mCrChannel = data.mCbChannel + height_ * data.mCbCrStride / 2;
+    data.mCbCrSize = gfxIntSize(width_/ 2, height_/ 2);
+    data.mPicX = 0;
+    data.mPicY = 0;
+    data.mPicSize = gfxIntSize(width_, height_);
+    data.mStereoMode = STEREO_MODE_MONO;
+
+    videoImage->SetData(data);
+  }
 
   image_ = image.forget();
 #endif

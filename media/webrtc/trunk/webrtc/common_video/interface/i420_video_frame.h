@@ -17,7 +17,9 @@
 
 #include "webrtc/common_video/plane.h"
 #include "webrtc/typedefs.h"
-
+#ifdef MOZ_WIDGET_GONK
+#include "system_wrappers/interface/critical_section_wrapper.h"
+#endif
 /*
  *  I420VideoFrame includes support for a reference counted impl.
  */
@@ -129,6 +131,18 @@ class I420VideoFrame {
   int height_;
   uint32_t timestamp_;
   int64_t render_time_ms_;
+
+#ifdef MOZ_WIDGET_GONK
+public:
+  void SetGonkBuffer(void* gonk);
+  void* GetGonkBuffer();
+  bool IsGonkBufferInUse();
+  void SetGonkBufferInUse(bool use);
+private:
+  bool used_;
+  void* gonk_;
+  CriticalSectionWrapper* criticalsec_;
+#endif
 };  // I420VideoFrame
 
 }  // namespace webrtc

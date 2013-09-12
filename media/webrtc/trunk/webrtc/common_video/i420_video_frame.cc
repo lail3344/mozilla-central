@@ -12,15 +12,32 @@
 
 #include <algorithm>  // swap
 
+#ifdef MOZ_WIDGET_GONK
+#define LOG_TAG "WebrtcExtVideoCodec"
+#include "utils/Log.h"
+#endif
+
 namespace webrtc {
 
 I420VideoFrame::I420VideoFrame()
     : width_(0),
       height_(0),
       timestamp_(0),
-      render_time_ms_(0) {}
+      render_time_ms_(0) {
+#ifdef MOZ_WIDGET_GONK
+        criticalsec_ = CriticalSectionWrapper::CreateCriticalSection();
+        gonk_ = NULL;
+        used_ = false;
+#endif
+      }
 
-I420VideoFrame::~I420VideoFrame() {}
+I420VideoFrame::~I420VideoFrame() {
+#ifdef MOZ_WIDGET_GONK
+  if (criticalsec_) {
+    delete criticalsec_;
+  }
+#endif
+}
 
 int I420VideoFrame::CreateEmptyFrame(int width, int height,
                                      int stride_y, int stride_u, int stride_v) {
@@ -72,6 +89,10 @@ int I420VideoFrame::CopyFrame(const I420VideoFrame& videoFrame) {
     return ret;
   timestamp_ = videoFrame.timestamp_;
   render_time_ms_ = videoFrame.render_time_ms_;
+#ifdef MOZ_WIDGET_GONK
+  gonk_ = videoFrame.gonk_;
+  used_ = videoFrame.used_;
+#endif
   return 0;
 }
 
@@ -83,6 +104,12 @@ void I420VideoFrame::SwapFrame(I420VideoFrame* videoFrame) {
   std::swap(height_, videoFrame->height_);
   std::swap(timestamp_, videoFrame->timestamp_);
   std::swap(render_time_ms_, videoFrame->render_time_ms_);
+#ifdef MOZ_WIDGET_GONK
+  void* gonk = gonk_;
+  gonk_ = videoFrame->gonk_;
+  videoFrame->gonk_ = gonk;
+  std::swap(used_, videoFrame->used_);
+#endif
 }
 
 uint8_t* I420VideoFrame::buffer(PlaneType type) {
@@ -179,5 +206,30 @@ Plane* I420VideoFrame::GetPlane(PlaneType type) {
   return NULL;
 }
 
+#ifdef MOZ_WIDGET_GONK
+void I420VideoFrame::SetGonkBuffer(void* gonk) {
+  CriticalSectionScoped lock(criticalsec_);
+  LOGE("I420VideoFrame::SetGonkBuffer(%p) %p", this, gonk);
+  gonk_ = gonk;
+}
+
+void* I420VideoFrame::GetGonkBuffer() {
+  CriticalSectionScoped lock(criticalsec_);
+  LOGE("I420VideoFrame::GetGonkBuffer(%p) %p", this, gonk_);
+  return gonk_;
+}
+
+bool I420VideoFrame::IsGonkBufferInUse() {
+  CriticalSectionScoped lock(criticalsec_);
+  LOGE("I420VideoFrame::IsGonkBufferInUse(%p) %d", this, used_);
+  return used_;
+}
+
+void I420VideoFrame::SetGonkBufferInUse(bool use) {
+  CriticalSectionScoped lock(criticalsec_);
+  LOGE("I420VideoFrame::SetGonkBufferInUse(%p) %d", this, use);
+  used_ = use;
+}
+#endif
 
 }  // namespace webrtc

@@ -32,6 +32,7 @@ struct EncodedFrame {
   uint32_t width_;
   uint32_t height_;
   uint32_t timestamp_;
+  uint64_t decode_timestamp_;
 };
 
 class WebrtcExtVideoEncoder : public WebrtcVideoEncoder {
@@ -104,7 +105,7 @@ class WebrtcExtVideoDecoder : public WebrtcVideoDecoder {
 
   nsCOMPtr<nsIThread> thread_;
   webrtc::DecodedImageCallback* callback_;
-  webrtc::I420VideoFrame decoded_image_;
+  webrtc::I420VideoFrame video_frames_[2];
   mozilla::Mutex mutex_;
 
   void* decoder_;
