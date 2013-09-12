@@ -243,9 +243,13 @@ MediaConduitErrorCode WebrtcVideoConduit::Init()
                                __FUNCTION__,mPtrViEBase->LastError());
     return kMediaConduitCaptureError;
   }
-
+  // FIXME: remove experimental property
+  char omx[32];
+  property_get("webrtc.omx", omx, "0");
+  // use kVideoIYUV to indicate graphic buffer code path in the experiment
+  webrtc::RawVideoType vt = (atoi(omx) == 3? webrtc::kVideoIYUV : webrtc::kVideoI420);
   if(mPtrViERender->AddRenderer(mChannel,
-                                webrtc::kVideoI420,
+                                vt,
                                 (webrtc::ExternalRenderer*) this) == -1)
   {
     CSFLogError(logTag, "%s Failed to added external renderer ", __FUNCTION__);
@@ -909,12 +913,17 @@ WebrtcVideoConduit::CodecConfigToWebRTCCodec(const VideoCodecConfig* codecInfo,
   // leave width/height alone; they'll be overridden on the first frame
 
   // FIXME: eliminate experimental property
-  char min[32];
-  property_get("webrtc.bitrate_min", min, "200");
-  cinst.minBitrate = atoi(min);
+  char br[32];
+  property_get("webrtc.bitrate_min", br, "1200");
+  cinst.minBitrate = atoi(br);
 
   cinst.startBitrate = 300;
-  cinst.maxBitrate = 2000;
+  if (cinst.startBitrate < cinst.minBitrate) {
+    cinst.startBitrate = cinst.minBitrate;
+  }
+
+  property_get("webrtc.bitrate_max", br, "2000");
+  cinst.maxBitrate = atoi(br);
 }
 
 bool

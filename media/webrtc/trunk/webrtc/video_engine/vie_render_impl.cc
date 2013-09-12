@@ -317,7 +317,7 @@ int ViERenderImpl::AddRenderer(const int render_id,
                                RawVideoType video_input_format,
                                ExternalRenderer* external_renderer) {
   // Check if the client requested a format that we can convert the frames to.
-  if (video_input_format != kVideoI420 &&
+  if (video_input_format != kVideoI420 && video_input_format != kVideoIYUV && // expirement: use kVideoIYUV to indicate graphic buffer code path
       video_input_format != kVideoYV12 &&
       video_input_format != kVideoYUY2 &&
       video_input_format != kVideoUYVY &&

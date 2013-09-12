@@ -8,8 +8,8 @@ MODULE = 'test_signaling'
 
 if CONFIG['OS_TARGET'] != 'WINNT':
     CPP_UNIT_TESTS += [
-        'mediaconduit_unittests.cpp',
-        'mediapipeline_unittest.cpp',
-        'sdp_unittests.cpp',
-        'signaling_unittests.cpp',
+#        'mediaconduit_unittests.cpp',
+#        'mediapipeline_unittest.cpp',
+#        'sdp_unittests.cpp',
+#        'signaling_unittests.cpp',
     ]
