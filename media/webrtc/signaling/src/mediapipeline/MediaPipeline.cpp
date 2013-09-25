@@ -25,7 +25,6 @@
 #ifdef MOZ_WIDGET_GONK
 #include "GrallocImages.h"
 #include "cutils/properties.h" // FIXME: remove experimental property
-#undef LOG
 #define LOG_TAG "WebrtcExtVideoCodec"
 #include "utils/Log.h"
 #endif
@@ -1162,7 +1161,7 @@ void MediaPipelineReceiveVideo::PipelineListener::RenderVideoFrame(
 
     data.mPicSize = gfxIntSize(width_, height_);
     void* ptr = const_cast<unsigned char*>(buffer);
-    LOGE("MediaPipeline::RenderVideoFrame() y:%p => %p img:%p", buffer, static_cast<GraphicBufferLocked*>(ptr), image.get());
+    ALOGE("MediaPipeline::RenderVideoFrame() y:%p => %p img:%p", buffer, static_cast<GraphicBufferLocked*>(ptr), image.get());
     data.mGraphicBuffer = static_cast<GraphicBufferLocked*>(ptr);
     videoImage->SetData(data);
   } else {

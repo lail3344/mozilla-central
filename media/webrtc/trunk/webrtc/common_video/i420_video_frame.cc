@@ -209,25 +209,25 @@ Plane* I420VideoFrame::GetPlane(PlaneType type) {
 #ifdef MOZ_WIDGET_GONK
 void I420VideoFrame::SetGonkBuffer(void* gonk) {
   CriticalSectionScoped lock(criticalsec_);
-  LOGE("I420VideoFrame::SetGonkBuffer(%p) %p", this, gonk);
+  ALOGE("I420VideoFrame::SetGonkBuffer(%p) %p", this, gonk);
   gonk_ = gonk;
 }
 
 void* I420VideoFrame::GetGonkBuffer() {
   CriticalSectionScoped lock(criticalsec_);
-  LOGE("I420VideoFrame::GetGonkBuffer(%p) %p", this, gonk_);
+  ALOGE("I420VideoFrame::GetGonkBuffer(%p) %p", this, gonk_);
   return gonk_;
 }
 
 bool I420VideoFrame::IsGonkBufferInUse() {
   CriticalSectionScoped lock(criticalsec_);
-  LOGE("I420VideoFrame::IsGonkBufferInUse(%p) %d", this, used_);
+  ALOGE("I420VideoFrame::IsGonkBufferInUse(%p) %d", this, used_);
   return used_;
 }
 
 void I420VideoFrame::SetGonkBufferInUse(bool use) {
   CriticalSectionScoped lock(criticalsec_);
-  LOGE("I420VideoFrame::SetGonkBufferInUse(%p) %d", this, use);
+  ALOGE("I420VideoFrame::SetGonkBufferInUse(%p) %d", this, use);
   used_ = use;
 }
 #endif

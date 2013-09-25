@@ -18,13 +18,10 @@
 
 #include <mozilla/Scoped.h>
 
-// suppress including of Android log headers to avoid macro confliction
-#define _LIBS_UTILS_LOG_H
-#define _LIBS_CUTILS_LOG_H
+#include <gui/Surface.h>
+
 #include <GonkNativeWindow.h>
 #include <GonkNativeWindowClient.h>
-#undef _LIBS_UTILS_LOG_H
-#undef _LIBS_CUTILS_LOG_H
 
 #include "runnable_utils.h"
 
@@ -34,10 +31,15 @@
 
 #include "mozilla/Monitor.h"
 
-#include "MediaDefs.h"
-#include "MetaData.h"
-#include "OMXCodec.h"
-#include "OMXClient.h"
+#include <media/ICrypto.h>
+//#include <foundation/ADebug.h>
+#include <foundation/ABuffer.h>
+#include <foundation/AMessage.h>
+#include <OMX_Component.h>
+#include <media/IOMX.h>
+#include <MediaCodec.h>
+#include <MediaDefs.h>
+#include <MediaErrors.h>
 #include "binder/ProcessState.h"
 using namespace android;
 
@@ -45,154 +47,78 @@ using namespace android;
 #define EXT_VIDEO_FRAME_WIDTH 640
 #define EXT_VIDEO_FRAME_HEIGHT 480
 #define EXT_VIDEO_MAX_FRAMERATE 30
+#define DEQUEUE_BUFFER_TIMEOUT_US 3000000000
 
 // for debugging
 #define DUMP_FRAMES 0
 #include <cstdio>
 #define LOG_TAG "WebrtcExtVideoCodec"
-#undef LOG // make sure Android log is used
 #include <utils/Log.h>
 
 // for experiment
 #include <cutils/properties.h>
 
 namespace mozilla {
-// MediaSource
-class WebrtcMediaSource: public MediaSource, public MediaBufferObserver {
-public:
-  WebrtcMediaSource(nsIThread* thread, sp<MetaData> format):
-      thread_(thread), format_(format),
-      monitor_("WebrtcMediaSource"),
-      codecPaused_(false), dummyBuffer_(new MediaBuffer(1)) {}
-  virtual ~WebrtcMediaSource() {
-    dummyBuffer_->setObserver(0);
-    dummyBuffer_->release();
-  }
-  virtual sp<MetaData> getFormat() { return format_; }
-  virtual status_t start(MetaData *params = nullptr) { /* TODO */ return OK; }
-  virtual status_t stop() {
-    MonitorAutoLock lock(monitor_);
-    while (!buffers_.empty()) {
-      // FIXME: Leak! Must figure out why deleting will cause SIGSEGV
-      // MediaBuffer* front = buffers_.front();
-      //RUN_ON_THREAD(thread_,
-      //  WrapRunnable(front, &MediaBuffer::release),
-      //  NS_DISPATCH_NORMAL);
-
-      buffers_.pop();
-    }
-    return OK;
-  }
-
-  virtual status_t read(MediaBuffer **buffer,
-      const ReadOptions *options = nullptr) {
-    if (buffer) {
-      LOGV("WebrtcMediaSource::read()");
-      *buffer = getBuffer();
-      LOGV("WebrtcMediaSource::read() %p", *buffer);
-      if (!*buffer) {
-        if (!codecPaused_) {
-          codec_->pause();
-          codecPaused_ = true;
-        }
-        *buffer = dummyBuffer_;
-        dummyBuffer_->setObserver(this);
-        dummyBuffer_->add_ref();
-        //return ERROR_END_OF_STREAM;
-      }
-    }
-    return OK;
-  }
-
-  virtual void signalBufferReturned(MediaBuffer* buffer) {
-    if (buffer == dummyBuffer_) {
-      return;
-    }
-    MediaBuffer* front = getBuffer();
-    MOZ_ASSERT(buffer == front);
-    MonitorAutoLock lock(monitor_);
-    buffers_.pop();
-
-    buffer->setObserver(0);
-    // FIXME: Leak! Must figure out why deleting will cause SIGSEGV
-    //RUN_ON_THREAD(thread_,
-    //  WrapRunnable(front, &MediaBuffer::release),
-    //  NS_DISPATCH_NORMAL);
-
-    delete [] buffer->data();
-  }
-
-  virtual void pushBuffer(void* data, size_t size, uint32_t timestamp) {
-    MediaBuffer* buffer = new MediaBuffer(data, size);
-
-    buffer->setObserver(this);
-    buffer->add_ref();
-    buffer->meta_data()->setInt64(kKeyTime, timestamp);
-
-    if (codecPaused_) {
-      codec_->start();
-      codecPaused_ = false;
-    }
-
-    MonitorAutoLock lock(monitor_);
-    buffers_.push(buffer);
-    lock.Notify();
-  }
-
-  void setCodec(MediaSource* codec) {
-    codec_ = codec;
-  }
-
-private:
-  nsCOMPtr<nsIThread> thread_;
-  sp<MetaData> format_;
-
-  std::queue<MediaBuffer*> buffers_;
-  Monitor monitor_;
-  virtual MediaBuffer* getBuffer() {
-    MonitorAutoLock lock(monitor_);
-    MediaBuffer* front = nullptr;
-    if (buffers_.empty()) {
-      // FIXME: remove experimental property after proper value is found
-      char timeout[32];
-      property_get("webrtc.read_timeout", timeout, "3000");
-      lock.Wait(PR_MillisecondsToInterval(atoi(timeout)));
-    }
-    return buffers_.empty()? nullptr:buffers_.front();
-  }
-
-  MediaSource* codec_;
-  bool codecPaused_;
-  MediaBuffer* dummyBuffer_;
-
-  static const int FRAME_READ_TIMEOUT;
-};
-
-const int WebrtcMediaSource::FRAME_READ_TIMEOUT = PR_MillisecondsToInterval(3000); // TODO: find proper value
 
 // Link to Stagefright
 class WebrtcOMX {
 public:
-  WebrtcOMX(nsIThread* thread, sp<MetaData> format) {
+  WebrtcOMX(const char* mime, bool encoder) {
     if (!threadPool) {
       android::ProcessState::self()->startThreadPool();
       threadPool = true;
     }
-    source_ = new WebrtcMediaSource(thread, format);
+    looper_ = new ALooper;
+    looper_->start();
+    omx_ = MediaCodec::CreateByType(looper_, mime, encoder);
   }
-  virtual ~WebrtcOMX() {}
 
-  sp<MediaSource> omx_; // OMXCodec
-  sp<WebrtcMediaSource> source_; // OMX input source
+  virtual ~WebrtcOMX() {
+    looper_.clear();
+    omx_.clear();
+  }
+
+  status_t Configure(const sp<AMessage>& format,
+    const sp<Surface>& nativeWindow,
+    const sp<ICrypto>& crypto, uint32_t flags) {
+    return omx_->configure(format, nativeWindow, crypto, flags);
+  }
+
+  status_t Start() {
+    status_t err = omx_->start();
+    started_ = err == OK;
+
+    omx_->getInputBuffers(&input_);
+    omx_->getOutputBuffers(&output_);
+
+    return err;
+  }
+
+  status_t Stop() {
+    status_t err = omx_->stop();
+    started_ = err == OK;
+    return err;
+  }
+
+  friend class WebrtcExtVideoEncoder;
+  friend class WebrtcExtVideoDecoder;
+
+private:
+  static bool threadPool;
+
+  sp<ALooper> looper_;
+  sp<MediaCodec> omx_; // OMXCodec
+  bool started_;
+  Vector<sp<ABuffer> > input_;
+  Vector<sp<ABuffer> > output_;
   // To distinguish different OMX configuration:
   // 1. HW
   // 2. SW
   // 3. HW using graphic buffer)
-  int type;
+  int type_;
+
   sp<GonkNativeWindow> native_window_;
   sp<GonkNativeWindowClient> native_window_client_;
-private:
-  static bool threadPool;
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(WebrtcOMX)
 };
@@ -202,36 +128,36 @@ bool WebrtcOMX::threadPool = false;
 // Graphic buffer management. Steal from content/media/omx/OmxDecoder.*
 class VideoGraphicBuffer : public layers::GraphicBufferLocked {
 public:
-    VideoGraphicBuffer(MediaBuffer* aOmx, webrtc::I420VideoFrame* aFrame,
+    VideoGraphicBuffer(const sp<MediaCodec>& aOmx, uint32_t bufferIndex,
+                       webrtc::I420VideoFrame* aFrame,
                        layers::SurfaceDescriptor& aDescriptor)
-      :layers::GraphicBufferLocked(aDescriptor), mOmx(aOmx), mFrame(aFrame),
-      mMonitor("VideoGraphicBuffer") {
-        MonitorAutoLock lock(mMonitor);
-        mOmx->add_ref();
-    }
+      :layers::GraphicBufferLocked(aDescriptor),
+      mOmx(aOmx), mBufferIndex(bufferIndex), mFrame(aFrame),
+      mMonitor("VideoGraphicBuffer") {}
 
     virtual ~VideoGraphicBuffer() {
-      LOGV("~VideoGraphicBuffer(%p) omx:%p", this, mOmx);
+      ALOGE("~VideoGraphicBuffer(%p) omx:%p", this, mOmx.get());
       MonitorAutoLock lock(mMonitor);
-      if (mOmx) {
-        mOmx->release();
+      if (mOmx.get()) {
+        mOmx->releaseOutputBuffer(mBufferIndex);
         mOmx = nullptr;
       }
       clearFrame();
     }
 
     void Unlock() {
-      LOGV("VideoGraphicBuffer::Unlock(%p) omx:%p", this, mOmx);
+      ALOGE("VideoGraphicBuffer::Unlock(%p) omx:%p", this, mOmx.get());
       MonitorAutoLock lock(mMonitor);
-      if (mOmx) {
-        mOmx->release();
+      if (mOmx.get()) {
+        mOmx->releaseOutputBuffer(mBufferIndex);
         mOmx = nullptr;
       }
       clearFrame();
     }
 
 private:
-  MediaBuffer* mOmx;
+  sp<MediaCodec> mOmx;
+  uint32_t mBufferIndex;
   webrtc::I420VideoFrame* mFrame;
   Monitor mMonitor;
 
@@ -256,67 +182,35 @@ WebrtcExtVideoEncoder::WebrtcExtVideoEncoder()
     callback_(nullptr),
     mutex_("WebrtcExtVideoEncoder"),
     encoder_(nullptr) {
-  nsIThread* thread;
-
-  nsresult rv = NS_NewNamedThread("encoder-thread", &thread);
-  MOZ_ASSERT(NS_SUCCEEDED(rv));
-
-  thread_ = thread;
 
   memset(&encoded_image_, 0, sizeof(encoded_image_));
-  LOGV("WebrtcExtVideoEncoder::WebrtcExtVideoEncoder %p", this);
+  ALOGE("WebrtcExtVideoEncoder::WebrtcExtVideoEncoder %p", this);
 }
 
-static MetaData* VideoCodecSettings2Metadata(
+static AMessage* VideoCodecSettings2AMessage(
     const webrtc::VideoCodec* codecSettings) {
-  MetaData* enc_meta = new MetaData;
+  AMessage* format = new AMessage;
 
-  enc_meta->setInt32(kKeyBitRate, codecSettings->minBitrate * 1000); // kbps->bps
-
-  // FIXME: get correct parameters from codecSettings
-  enc_meta->setCString(kKeyMIMEType, MEDIA_MIMETYPE_VIDEO_AVC);
-  enc_meta->setInt32(kKeyVideoProfile, OMX_VIDEO_AVCProfileBaseline);
-  enc_meta->setInt32(kKeyVideoLevel, OMX_VIDEO_AVCLevel3);
-  enc_meta->setInt32(kKeyIFramesInterval, 10);
-
-  enc_meta->setInt32(kKeyFrameRate, codecSettings->maxFramerate);
-  enc_meta->setInt32(kKeyWidth, codecSettings->width);
-  enc_meta->setInt32(kKeyHeight, codecSettings->height);
-  enc_meta->setInt32(kKeyStride, codecSettings->width);
-  enc_meta->setInt32(kKeySliceHeight, codecSettings->height);
-
+  format->setString("mime", MEDIA_MIMETYPE_VIDEO_AVC);
+  format->setInt32("store-metadata-in-buffers", 0);
+  format->setInt32("prepend-sps-pps-to-idr-frames", 0);
+  format->setInt32("bitrate", codecSettings->minBitrate * 1000); // kbps->bps
+  format->setInt32("width", codecSettings->width);
+  format->setInt32("height", codecSettings->height);
+  format->setInt32("stride", codecSettings->width);
+  format->setInt32("slice-height", codecSettings->height);
+  format->setInt32("frame-rate", codecSettings->maxFramerate);
   // TODO: ddQCOM encoder only support this format. See
   // <B2G>/hardware/qcom/media/mm-video/vidc/venc/src/video_encoder_device.cpp:
   // venc_dev::venc_set_color_format()
-  enc_meta->setInt32(kKeyColorFormat, OMX_COLOR_FormatYUV420SemiPlanar);
+  format->setInt32("color-format", OMX_COLOR_FormatYUV420SemiPlanar);
+  // FIXME: get correct parameters from codecSettings
+  format->setInt32("i-frame-interval", 10);
+  format->setInt32("profile", OMX_VIDEO_AVCProfileBaseline);
+  format->setInt32("level", OMX_VIDEO_AVCLevel3);
+  format->setInt32("bitrate-mode", OMX_Video_ControlRateConstant);
 
-  return enc_meta;
-}
-
-int32_t SetupOMX(sp<MetaData> enc_meta,
-        WebrtcOMX* encoder) {
-    OMXClient client;
-    MOZ_ASSERT(, "Cannot connect to media service");
-    if (client.connect() != OK) {
-      return WEBRTC_VIDEO_CODEC_ERROR;
-    }
-    uint32_t encoder_flags = 0;
-    encoder_flags |= OMXCodec::kOnlySubmitOneInputBufferAtOneTime;
-
-    sp<MediaSource> omx = OMXCodec::Create(
-      client.interface(), enc_meta,
-      true /* createEncoder */, encoder->source_,
-      nullptr, encoder_flags);
-    if (omx == nullptr) {
-      encoder->source_->stop();
-      return WEBRTC_VIDEO_CODEC_ERROR;
-    }
-
-    encoder->omx_ = omx;
-    encoder->source_->setCodec(omx.get());
-    omx->start(enc_meta.get());
-
-  return WEBRTC_VIDEO_CODEC_OK;
+  return format;
 }
 
 int32_t WebrtcExtVideoEncoder::InitEncode(
@@ -324,7 +218,7 @@ int32_t WebrtcExtVideoEncoder::InitEncode(
     int32_t numberOfCores,
     uint32_t maxPayloadSize) {
   max_payload_size_ = maxPayloadSize;
-  LOGV("WebrtcExtVideoEncoder::InitEncode %p", this);
+  ALOGE("WebrtcExtVideoEncoder::InitEncode %p", this);
 
   if (omxEnc == nullptr) { // FIXME: implement proper lifecycle management
     // FIXME: use input parameters
@@ -340,10 +234,12 @@ int32_t WebrtcExtVideoEncoder::InitEncode(
 
     codec_inst.maxFramerate = codecSettings->maxFramerate;
 
-    sp<MetaData> enc_meta = VideoCodecSettings2Metadata(&codec_inst);
-    omxEnc  = new WebrtcOMX(thread_.get(), enc_meta);
-    SetupOMX(enc_meta, omxEnc);
+    sp<AMessage> conf = VideoCodecSettings2AMessage(&codec_inst);
+    omxEnc = new WebrtcOMX(MEDIA_MIMETYPE_VIDEO_AVC, true /* encoder */);
+    omxEnc->Configure(conf, nullptr, nullptr,
+      MediaCodec::CONFIGURE_FLAG_ENCODE);
   }
+  omxEnc->started_ = false;
   encoder_ = omxEnc;
 
   MutexAutoLock lock(mutex_);
@@ -371,40 +267,110 @@ int32_t WebrtcExtVideoEncoder::Encode(
 
   uint32_t time = PR_IntervalNow();
   WebrtcOMX* encoder = (reinterpret_cast<WebrtcOMX*>(encoder_));
-
+  if (!encoder->started_) {
+    encoder->Start();
+    ALOGE("WebrtcExtVideoEncoder::Encode() start OMX took %u ms",
+      PR_IntervalToMilliseconds(PR_IntervalNow()-time));
+    time = PR_IntervalNow();
+  }
   // TODO: eliminate extra pixel copy & color conversion
   size_t sizeY = inputImage.allocated_size(webrtc::kYPlane);
   size_t sizeUV = inputImage.allocated_size(webrtc::kUPlane);
   const uint8_t* u = inputImage.buffer(webrtc::kUPlane);
   const uint8_t* v = inputImage.buffer(webrtc::kVPlane);
   size_t size = sizeY + 2 * sizeUV;
-  uint8_t* dstY = new uint8_t[size];
+
+  sp<MediaCodec> omx = encoder->omx_;
+  size_t index;
+  status_t err = omx->dequeueInputBuffer(&index, DEQUEUE_BUFFER_TIMEOUT_US);
+  if (err != OK) {
+    ALOGE("WebrtcExtVideoEncoder::Encode() dequeue OMX input buffer error:%d", err);
+    return WEBRTC_VIDEO_CODEC_ERROR;
+  }
+
+  ALOGE("WebrtcExtVideoEncoder::Encode() dequeue OMX input buffer took %u ms",
+    PR_IntervalToMilliseconds(PR_IntervalNow()-time));
+  time = PR_IntervalNow();
+
+  const sp<ABuffer>& omxIn = encoder->input_.itemAt(index);
+  MOZ_ASSERT(omxIn->capacity() >= size);
+  omxIn->setRange(0, size);
+  uint8_t* dstY = omxIn->data();
   uint16_t* dstUV = reinterpret_cast<uint16_t*>(dstY + sizeY);
   memcpy(dstY, inputImage.buffer(webrtc::kYPlane), sizeY);
   for (int i = 0; i < sizeUV;
       i++, dstUV++, u++, v++) {
     *dstUV = (*u << 8) + *v;
   }
-  WebrtcMediaSource* source = encoder->source_.get();
-  source->pushBuffer(static_cast<void*>(dstY), size, timestamp_);
 
-  timestamp_ += 90000 / 30; // FIXME: use timestamp from camera
+  err = omx->queueInputBuffer(index, 0, size,
+    inputImage.render_time_ms() * 1000000, // ms to us
+    0);
+  if (err != OK) {
+    ALOGE("WebrtcExtVideoEncoder::Encode() queue OMX input buffer error:%d", err);
+    return WEBRTC_VIDEO_CODEC_ERROR;
+  }
+  ALOGE("WebrtcExtVideoEncoder::Encode() queue OMX input buffer took %u ms",
+    PR_IntervalToMilliseconds(PR_IntervalNow()-time));
+  time = PR_IntervalNow();
+
+  timestamp_ = inputImage.timestamp();
 
   EncodedFrame frame;
   frame.width_ = inputImage.width();
   frame.height_ = inputImage.height();
   frame.timestamp_ = timestamp_;
 
-  LOGV("WebrtcExtVideoEncoder::Encode(%d) %dx%d -> %dx%d",
-    PR_IntervalToMilliseconds(PR_IntervalNow()-time), inputImage.width(), inputImage.height(),
-    frame.width_, frame.height_);
+  ALOGE("WebrtcExtVideoEncoder::Encode() %dx%d -> %ux%u took %u ms",
+    inputImage.width(), inputImage.height(), frame.width_, frame.height_,
+    PR_IntervalToMilliseconds(PR_IntervalNow()-time));
+  time = PR_IntervalNow();
 
-  MutexAutoLock lock(mutex_);
-  frames_.push(frame);
+  encoded_image_._encodedWidth = frame.width_;
+  encoded_image_._encodedHeight = frame.height_;
+  encoded_image_._timeStamp = frame.timestamp_;
+  encoded_image_.capture_time_ms_ = frame.timestamp_;
 
-  RUN_ON_THREAD(thread_,
-    WrapRunnable(this, &WebrtcExtVideoEncoder::EmitFrames),
-    NS_DISPATCH_NORMAL);
+  size_t outOffset;
+  size_t outSize;
+  int64_t outTime;
+  uint32_t outFlags;
+  err = omx->dequeueOutputBuffer(&index, &outOffset, &outSize, &outTime,
+    &outFlags, DEQUEUE_BUFFER_TIMEOUT_US);
+  if (err == INFO_FORMAT_CHANGED) {
+    // TODO: handle format change
+  } else if (err == INFO_OUTPUT_BUFFERS_CHANGED) {
+    err = omx->getOutputBuffers(&encoder->output_);
+    // TODO: handle output buffers change
+    MOZ_ASSERT(err == OK);
+  } else if (err != OK) {
+    ALOGE("WebrtcExtVideoEncoder::Encode() dequeue OMX output buffer error:%d", err);
+    return WEBRTC_VIDEO_CODEC_ERROR;
+  }
+  ALOGE("WebrtcExtVideoEncoder::Encode() output len:%u time:%d flags:%u took %u ms",
+   outSize, outTime, outFlags, PR_IntervalToMilliseconds(PR_IntervalNow()-time));
+
+  sp<ABuffer> omxOut = encoder->output_.itemAt(index);
+  encoded_image_._length = omxOut->size();
+  uint8_t* data = omxOut->data();
+  memcpy(encoded_image_._buffer, data, encoded_image_._length);
+  omx->releaseOutputBuffer(index);
+
+  encoded_image_._completeFrame = true;
+  encoded_image_._frameType =
+    outFlags & (MediaCodec::BUFFER_FLAG_SYNCFRAME | MediaCodec::BUFFER_FLAG_CODECCONFIG)?
+    webrtc::kKeyFrame:webrtc::kDeltaFrame;
+
+#if DUMP_FRAMES
+  char path[127];
+  sprintf(path, "/data/local/tmp/omx-%012d.h264", frame.timestamp_);
+  FILE* out = fopen(path, "w+");
+  fwrite(encoded_image_._buffer, encoded_image_._length, 1, out);
+  fclose(out);
+#endif
+
+  ALOGE("WebrtcExtVideoEncoder::Encode() frame type:%d", encoded_image_._frameType);
+  callback_->Encoded(encoded_image_, nullptr, nullptr);
 
   return WEBRTC_VIDEO_CODEC_OK;
 }
@@ -421,46 +387,6 @@ void WebrtcExtVideoEncoder::EmitFrames() {
 
 void WebrtcExtVideoEncoder::EmitFrame(EncodedFrame *frame) {
   MOZ_ASSERT(frame);
-
-  WebrtcOMX* encoder = (static_cast<WebrtcOMX*>(encoder_));
-  MediaBuffer* buffer = nullptr;
-  sp<MediaSource> omx = encoder->omx_;
-  if (omx->read(&buffer) != OK || buffer == nullptr) {
-    return;
-  }
-
-  encoded_image_._encodedWidth = frame->width_;
-  encoded_image_._encodedHeight = frame->height_;
-  encoded_image_._timeStamp = frame->timestamp_;
-  encoded_image_.capture_time_ms_ = frame->timestamp_;
-
-  sp<MetaData> meta = buffer->meta_data();
-  int32_t isKey = false;
-  if (meta.get() &&
-      ((meta->findInt32(kKeyIsSyncFrame, &isKey) && isKey) ||
-       (meta->findInt32(kKeyIsCodecConfig, &isKey) && isKey))) {
-    encoded_image_._frameType = webrtc::kKeyFrame;
-  } else {
-    encoded_image_._frameType = webrtc::kDeltaFrame;
-  }
-
-  encoded_image_._length = buffer->range_length();
-  uint8_t* data = static_cast<uint8_t*>(buffer->data()) + buffer->range_offset();
-  memcpy(encoded_image_._buffer, data, encoded_image_._length);
-  encoded_image_._completeFrame = true;
-
-#if DUMP_FRAMES
-  char path[127];
-  sprintf(path, "/data/local/tmp/omx-%012d.h264", frame->timestamp_);
-  FILE* out = fopen(path, "w+");
-  fwrite(data, encoded_image_._length, 1, out);
-  fclose(out);
-#endif
-
-  buffer->release();
-
-  LOGV("WebrtcExtVideoEncoder::EmitFrame(%d) encoded len:%d", encoded_image_._frameType, encoded_image_._length);
-  callback_->Encoded(encoded_image_, nullptr, nullptr);
 }
 
 int32_t WebrtcExtVideoEncoder::RegisterEncodeCompleteCallback(
@@ -471,7 +397,7 @@ int32_t WebrtcExtVideoEncoder::RegisterEncodeCompleteCallback(
 }
 
 int32_t WebrtcExtVideoEncoder::Release() {
-  LOGV("WebrtcExtVideoEncoder::Release %p", this);
+  ALOGV("WebrtcExtVideoEncoder::Release %p", this);
   if (encoder_) {
     // FIXME: Leak! Should implement proper lifecycle management
     // WebrtcOMX* omx = static_cast<WebrtcOMX*>(encoder_);
@@ -490,7 +416,7 @@ int32_t WebrtcExtVideoEncoder::Release() {
 }
 
 WebrtcExtVideoEncoder::~WebrtcExtVideoEncoder() {
-  LOGV("WebrtcExtVideoEncoder::~WebrtcExtVideoEncoder %p", this);
+  ALOGV("WebrtcExtVideoEncoder::~WebrtcExtVideoEncoder %p", this);
 }
 
 // TODO
@@ -512,57 +438,13 @@ static WebrtcOMX* omxDec = nullptr;
 WebrtcExtVideoDecoder::WebrtcExtVideoDecoder()
     : callback_(nullptr),
       mutex_("WebrtcExtVideoDecoder") {
-  nsIThread* thread;
-  nsresult rv = NS_NewNamedThread("decoder-thread", &thread);
-  MOZ_ASSERT(NS_SUCCEEDED(rv));
-
-  thread_ = thread;
-
-  LOGV("WebrtcExtVideoDecoder::WebrtcExtVideoDecoder %p", this);
-}
-
-int32_t SetupOMXDec(sp<MetaData> dec_meta,
-        WebrtcOMX* decoder) {
-    OMXClient client;
-    MOZ_ASSERT(, "Cannot connect to media service");
-    if (client.connect() != OK) {
-      return WEBRTC_VIDEO_CODEC_ERROR;
-    }
-    uint32_t decoder_flags = 0;
-
-    // FIXME: remove experimental property
-    char type[32];
-    property_get("webrtc.omx", type, "0");
-    decoder->type = atoi(type);
-    if (decoder->type == 2) {
-      decoder_flags |= OMXCodec::kSoftwareCodecsOnly;
-    } else if (decoder->type == 3) { // use graphic buffer
-      decoder->native_window_ = new GonkNativeWindow();
-      decoder->native_window_client_ = new GonkNativeWindowClient(decoder->native_window_);
-    }
-
-    decoder_flags |= OMXCodec::kOnlySubmitOneInputBufferAtOneTime;
-
-    sp<MediaSource> omx = OMXCodec::Create(
-      client.interface(), dec_meta,
-      false /* createEncoder */, decoder->source_,
-      nullptr, decoder_flags,
-      decoder->type == 3? decoder->native_window_client_:NULL);
-    if (omx == nullptr) {
-      decoder->source_->stop();
-      return WEBRTC_VIDEO_CODEC_ERROR;
-    }
-
-    decoder->omx_ = omx;
-    omx->start(dec_meta.get());
-
-  return WEBRTC_VIDEO_CODEC_OK;
+  ALOGE("WebrtcExtVideoDecoder::WebrtcExtVideoDecoder %p", this);
 }
 
 int32_t WebrtcExtVideoDecoder::InitDecode(
     const webrtc::VideoCodec* codecSettings,
     int32_t numberOfCores) {
-  LOGV("WebrtcExtVideoDecoder::InitDecode %p", this);
+  ALOGE("WebrtcExtVideoDecoder::InitDecode %p", this);
   // FIXME: implement proper lifecycle management
   if (omxDec == nullptr) {
     // FIXME: use input parameters
@@ -577,49 +459,74 @@ int32_t WebrtcExtVideoDecoder::InitDecode(
     codec_inst.maxBitrate = codecSettings->maxBitrate;
     codec_inst.minBitrate = codecSettings->minBitrate;
 
-    sp<MetaData> dec_meta = VideoCodecSettings2Metadata(&codec_inst);
-    omxDec  = new WebrtcOMX(thread_.get(), dec_meta);
-    SetupOMXDec(dec_meta, omxDec);
+    sp<AMessage> conf = VideoCodecSettings2AMessage(&codec_inst);
+    omxDec  = new WebrtcOMX(MEDIA_MIMETYPE_VIDEO_AVC, false /* encoder */);
+
+    char type[32];
+    property_get("webrtc.omx", type, "0");
+    omxDec->type_ = atoi(type);
+    sp<Surface> nativeWindow = nullptr;
+
+    if (omxDec->type_ == 3) {
+      omxDec->native_window_ = new GonkNativeWindow();
+#if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 18
+      omxDec->native_window_client_ =
+        new GonkNativeWindowClient(omxDec->native_window_->getBufferQueue());
+#else
+      omxDec->native_window_client_ =
+        new GonkNativeWindowClient(omxDec->native_window_);
+#endif
+      nativeWindow = new Surface(omxDec->native_window_client_->getIGraphicBufferProducer());
+    }
+    omxDec->Configure(conf, nativeWindow, nullptr, 0);
   }
+  omxDec->started_ = false;
   decoder_ = omxDec;
 
   return WEBRTC_VIDEO_CODEC_OK;
 }
 
-int32_t WebrtcExtVideoDecoder::Decode(
-    const webrtc::EncodedImage& inputImage,
-    bool missingFrames,
-    const webrtc::RTPFragmentationHeader* fragmentation,
-    const webrtc::CodecSpecificInfo*
-    codecSpecificInfo,
-    int64_t renderTimeMs) {
-  if (inputImage._length== 0 || !inputImage._buffer) {
-    return WEBRTC_VIDEO_CODEC_ERROR;
+void generateVideoFrame_hw(GonkNativeWindow* nativeWindow, EncodedFrame* frame,
+  const sp<MediaCodec>& omx, uint32_t bufferIndex, const sp<ABuffer>& decoded,
+  webrtc::I420VideoFrame* videoFrame) {
+  MOZ_ASSERT(!frame->IsGonkBufferInUse());
+
+  sp<GraphicBuffer> gb = nullptr;// FIXME decoded->graphicBuffer();
+  MOZ_ASSERT(gb.get());
+
+  layers::SurfaceDescriptor *descriptor = nativeWindow->getSurfaceDescriptorFromBuffer(gb.get());
+
+  // Change the descriptor's size to video's size. There are cases that
+  // GraphicBuffer's size and actual video size is different.
+  // See Bug 850566.
+  layers::SurfaceDescriptorGralloc newDescriptor = descriptor->get_SurfaceDescriptorGralloc();
+  newDescriptor.size() = nsIntSize(frame->width_, frame->height_);
+
+  mozilla::layers::SurfaceDescriptor descWrapper(newDescriptor);
+  VideoGraphicBuffer* vgb = new VideoGraphicBuffer(omx, bufferIndex,
+    videoFrame, descWrapper);
+
+  size_t width = frame->width_;
+  size_t height = frame->height_;
+  size_t widthUV = width / 2;
+  if (videoFrame->CreateEmptyFrame(width, height,
+                                      width, widthUV, widthUV)) {
+    return;
   }
+  ALOGE("generateVideoFrame_hw() gfx:%p vgb:%p", gb.get(), vgb);
+  VideoGraphicBuffer* old = static_cast<VideoGraphicBuffer*>(videoFrame->GetGonkBuffer());
+  if (old) {
+    old->Release();
+  }
+  vgb->AddRef();
+  videoFrame->SetGonkBuffer(vgb);
 
-  WebrtcOMX* decoder = static_cast<WebrtcOMX*>(decoder_);
-  WebrtcMediaSource* source = decoder->source_.get();
-
-  // FIXME: eliminate extra memory copy
-  uint8_t* input = new uint8_t[inputImage._length];
-  memcpy(input, inputImage._buffer, inputImage._length);
-  source->pushBuffer(input, inputImage._length, inputImage._timeStamp);
-
-  EncodedFrame* frame = new EncodedFrame();
-  frame->width_ = EXT_VIDEO_FRAME_WIDTH;
-  frame->height_ = EXT_VIDEO_FRAME_HEIGHT;
-  frame->timestamp_ = inputImage._timeStamp;
-  frame->decode_timestamp_ = PR_IntervalNow();
-
-  RUN_ON_THREAD(thread_,
-    WrapRunnable(this, &WebrtcExtVideoDecoder::DecodeFrame, frame),
-    NS_DISPATCH_NORMAL);
-
-  LOGV("WebrtcExtVideoDecoder::Decode() end input len:%d", inputImage._length);
-  return WEBRTC_VIDEO_CODEC_OK;
+  videoFrame->set_timestamp(frame->timestamp_);
 }
 
-void generateVideoFrame_sw(EncodedFrame* frame, MediaBuffer* decoded, webrtc::I420VideoFrame* videoFrame) {
+
+void generateVideoFrame_sw(EncodedFrame* frame, const sp<ABuffer>& decoded,
+  webrtc::I420VideoFrame* videoFrame) {
   // FIXME: eliminate extra pixel copy/color conversion
   // QCOM HW only support OMX_QCOM_COLOR_FormatYVU420PackedSemiPlanar32m4ka
   size_t width = frame->width_;
@@ -631,7 +538,7 @@ void generateVideoFrame_sw(EncodedFrame* frame, MediaBuffer* decoded, webrtc::I4
   }
   size_t roundedStride = (width + 31) & ~31;
   size_t roundedSliceHeight = (height + 31) & ~31;
-  uint8_t* y = static_cast<uint8_t*>(decoded->data()) + decoded->range_offset();
+  uint8_t* y = decoded->data();
   uint8_t* uv = y + (roundedStride * roundedSliceHeight);
   uint8_t* dstY = videoFrame->buffer(webrtc::kYPlane);
   uint8_t* dstU = videoFrame->buffer(webrtc::kUPlane);
@@ -671,73 +578,103 @@ void generateVideoFrame_sw(EncodedFrame* frame, MediaBuffer* decoded, webrtc::I4
 #endif
 }
 
-void generateVideoFrame_hw(GonkNativeWindow* nativeWindow, EncodedFrame* frame,
-  MediaBuffer* decoded, webrtc::I420VideoFrame* videoFrame) {
-  MOZ_ASSERT(!frame->IsGonkBufferInUse());
-
-  sp<GraphicBuffer> gb = decoded->graphicBuffer();
-  MOZ_ASSERT(gb.get());
-
-  layers::SurfaceDescriptor *descriptor = nativeWindow->getSurfaceDescriptorFromBuffer(gb.get());
-
-  // Change the descriptor's size to video's size. There are cases that
-  // GraphicBuffer's size and actual video size is different.
-  // See Bug 850566.
-  layers::SurfaceDescriptorGralloc newDescriptor = descriptor->get_SurfaceDescriptorGralloc();
-  newDescriptor.size() = nsIntSize(frame->width_, frame->height_);
-
-  mozilla::layers::SurfaceDescriptor descWrapper(newDescriptor);
-  VideoGraphicBuffer* vgb = new VideoGraphicBuffer(decoded, videoFrame, descWrapper);
-
-  size_t width = frame->width_;
-  size_t height = frame->height_;
-  size_t widthUV = width / 2;
-  if (videoFrame->CreateEmptyFrame(width, height,
-                                      width, widthUV, widthUV)) {
-    return;
+int32_t WebrtcExtVideoDecoder::Decode(
+    const webrtc::EncodedImage& inputImage,
+    bool missingFrames,
+    const webrtc::RTPFragmentationHeader* fragmentation,
+    const webrtc::CodecSpecificInfo* codecSpecificInfo,
+    int64_t renderTimeMs) {
+  ALOGE("WebrtcExtVideoDecoder::Decode()");
+  if (inputImage._length== 0 || !inputImage._buffer) {
+    return WEBRTC_VIDEO_CODEC_ERROR;
   }
-  LOGV("generateVideoFrame_hw() gfx:%p vgb:%p", gb.get(), vgb);
-  VideoGraphicBuffer* old = static_cast<VideoGraphicBuffer*>(videoFrame->GetGonkBuffer());
-  if (old) {
-    old->Release();
-  }
-  vgb->AddRef();
-  videoFrame->SetGonkBuffer(vgb);
 
-  videoFrame->set_timestamp(frame->timestamp_);
-}
-
-void WebrtcExtVideoDecoder::DecodeFrame(EncodedFrame* frame) {
-  WebrtcOMX* decoder = static_cast<WebrtcOMX*>(decoder_);
-
-  sp<MediaSource> omx = decoder->omx_;
-  MediaBuffer* decoded = nullptr;
+  bool firstFrame = false;
   uint32_t time = PR_IntervalNow();
-  uint32_t delay = PR_IntervalToMilliseconds(time - frame->decode_timestamp_);
-  status_t status = omx->read(&decoded);
-  frame->decode_timestamp_ = PR_IntervalNow();
-  if (status != OK) {
-    time = PR_IntervalToMilliseconds(PR_IntervalNow() - time);
-    LOGV("WebrtcExtVideoDecoder::DecodeFrame() OMX err: %d, delay: %dms took %dms", status,
-      delay, time);
-    return;
+  WebrtcOMX* decoder = static_cast<WebrtcOMX*>(decoder_);
+  if (!decoder->started_) {
+    firstFrame = true;
+    decoder->Start();
+    ALOGE("WebrtcExtVideoDecoder::Decode() start decoder took %u ms",
+      PR_IntervalToMilliseconds(PR_IntervalNow()-time));
   }
-  time = PR_IntervalToMilliseconds(PR_IntervalNow() - time);
-  LOGV("WebrtcExtVideoDecoder::DecodeFrame() after OMX buffer:%p len:%d, delay %dms took %dms",
-    decoded, decoded->range_length(), delay, time);
+  time = PR_IntervalNow();
 
-  if (decoder->type == 3) {
+  sp<MediaCodec> omx = decoder->omx_;
+  size_t index;
+  status_t err = omx->dequeueInputBuffer(&index, DEQUEUE_BUFFER_TIMEOUT_US);
+  if (err != OK) {
+    ALOGE("WebrtcExtVideoDecoder::Decode() dequeue input buffer error:%d", err);
+    return WEBRTC_VIDEO_CODEC_ERROR;
+  }
+  ALOGE("WebrtcExtVideoDecoder::Decode() dequeue input buffer took %u ms",
+    PR_IntervalToMilliseconds(PR_IntervalNow()-time));
+  time = PR_IntervalNow();
+
+  uint32_t flags = 0;
+  if (inputImage._frameType == webrtc::kKeyFrame) {
+    flags |= firstFrame? MediaCodec::BUFFER_FLAG_CODECCONFIG:MediaCodec::BUFFER_FLAG_SYNCFRAME;
+  }
+  size_t size = inputImage._length;
+  const sp<ABuffer>& omxIn = decoder->input_.itemAt(index);
+  MOZ_ASSERT(omxIn->capacity() >= size);
+  omxIn->setRange(0, size);
+  memcpy(omxIn->data(), inputImage._buffer, size);
+  int64_t timestamp = 1000000000 * inputImage._timeStamp / 90000; // in us
+  omx->queueInputBuffer(index, 0, size, timestamp, flags);
+
+  ALOGE("WebrtcExtVideoDecoder::Decode() queue input buffer len:%u took %u ms",
+    size, PR_IntervalToMilliseconds(PR_IntervalNow()-time));
+  time = PR_IntervalNow();
+
+  EncodedFrame* frame = new EncodedFrame();
+  frame->width_ = inputImage._encodedWidth;
+  frame->height_ = inputImage._encodedHeight;
+  frame->timestamp_ = inputImage._timeStamp;
+  frame->decode_timestamp_ = PR_IntervalNow();
+
+  size_t outOffset;
+  size_t outSize;
+  int64_t outTime;
+  uint32_t outFlags;
+  omx->dequeueOutputBuffer(&index, &outOffset, &outSize, &outTime, &outFlags);
+  if (err == INFO_FORMAT_CHANGED) {
+    // TODO: handle format change
+  } else if (err == INFO_OUTPUT_BUFFERS_CHANGED) {
+    err = omx->getOutputBuffers(&decoder->output_);
+    // TODO: handle output buffers change
+    MOZ_ASSERT(err == OK);
+  } else if (err != OK) {
+    ALOGE("WebrtcExtVideoDecoder::Decode() dequeue OMX output buffer error:%d", err);
+    return WEBRTC_VIDEO_CODEC_ERROR;
+  }
+
+  ALOGE("WebrtcExtVideoDecoder::Decode() dequeue output buffer len:%u time:%d flag:%u took %u ms",
+    outSize, outTime, outFlags, PR_IntervalToMilliseconds(PR_IntervalNow()-time));
+  time = PR_IntervalNow();
+
+  const sp<ABuffer> omxOut = decoder->output_.itemAt(index);
+  if (decoder->type_ == 3) {
     webrtc::I420VideoFrame* videoFrame = video_frames_[0].IsGonkBufferInUse()?
       &video_frames_[1]:&video_frames_[0];
-    generateVideoFrame_hw(decoder->native_window_.get(), frame, decoded, videoFrame);
+    generateVideoFrame_hw(decoder->native_window_.get(), frame,
+      omx, index,
+      omxOut, videoFrame);
     callback_->Decoded(*videoFrame);
   } else {
-    generateVideoFrame_sw(frame, decoded, &video_frames_[0]);
+    generateVideoFrame_sw(frame, omxOut, &video_frames_[0]);
+    omx->releaseOutputBuffer(index);
     callback_->Decoded(video_frames_[0]);
   }
 
-  decoded->release();
   delete frame;
+
+  ALOGE("WebrtcExtVideoDecoder::Decode() end");
+
+  return WEBRTC_VIDEO_CODEC_OK;
+}
+
+void WebrtcExtVideoDecoder::DecodeFrame(EncodedFrame* frame) {
 }
 
 int32_t WebrtcExtVideoDecoder::RegisterDecodeCompleteCallback(
@@ -749,12 +686,12 @@ int32_t WebrtcExtVideoDecoder::RegisterDecodeCompleteCallback(
 
 
 int32_t WebrtcExtVideoDecoder::Release() {
-  LOGV("WebrtcExtVideoEncoder::Release %p", this);
+  ALOGV("WebrtcExtVideoEncoder::Release %p", this);
   return WEBRTC_VIDEO_CODEC_OK;
 }
 
 WebrtcExtVideoDecoder::~WebrtcExtVideoDecoder() {
-  LOGV("WebrtcExtVideoDecoder::~WebrtcExtVideoDecoder %p", this);
+  ALOGV("WebrtcExtVideoDecoder::~WebrtcExtVideoDecoder %p", this);
 }
 
 int32_t WebrtcExtVideoDecoder::Reset() {

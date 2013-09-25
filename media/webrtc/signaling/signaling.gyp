@@ -19,6 +19,13 @@
         'defines' : [
           'WEBRTC_GONK',
        ],
+        'include_dirs': [
+          '$(ANDROID_SOURCE)/frameworks/av/include/media/stagefright',
+          '$(ANDROID_SOURCE)/frameworks/av/include',
+          '$(ANDROID_SOURCE)/frameworks/native/include/media/openmax',
+          '$(ANDROID_SOURCE)/frameworks/native/include',
+          '$(ANDROID_SOURCE)/frameworks/native/opengl/include',
+       ],
       }],
     ],
   },

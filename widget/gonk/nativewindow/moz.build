@@ -34,7 +34,7 @@ elif CONFIG['ANDROID_VERSION'] == '15':
         'GonkNativeWindowICS.h',
     ]
 
-if CONFIG['MOZ_B2G_CAMERA'] or CONFIG['MOZ_OMX_DECODER']:
+if CONFIG['MOZ_B2G_CAMERA'] or CONFIG['MOZ_OMX_DECODER'] or CONFIG['MOZ_WEBRTC']:
     if CONFIG['ANDROID_VERSION'] == '18':
         CPP_SOURCES += [
             'GonkBufferQueue.cpp',

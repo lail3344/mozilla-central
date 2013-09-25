@@ -65,7 +65,6 @@ class WebrtcExtVideoEncoder : public WebrtcVideoEncoder {
   void EmitFrames();
   void EmitFrame(EncodedFrame *frame);
 
-  nsCOMPtr<nsIThread> thread_;
   std::queue<EncodedFrame> frames_;
   size_t max_payload_size_;
   uint32_t timestamp_;
@@ -103,7 +102,6 @@ class WebrtcExtVideoDecoder : public WebrtcVideoDecoder {
   void DecodeFrame(EncodedFrame* frame);
   void RunCallback();
 
-  nsCOMPtr<nsIThread> thread_;
   webrtc::DecodedImageCallback* callback_;
   webrtc::I420VideoFrame video_frames_[2];
   mozilla::Mutex mutex_;

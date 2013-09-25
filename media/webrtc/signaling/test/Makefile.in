@@ -150,8 +150,10 @@ LIBS += $(MOZ_ZLIB_LIBS)
 endif
 ifeq (gonk,$(MOZ_WIDGET_TOOLKIT))
 LIBS += \
-  -lutils -lstagefright -lmedia -lstagefright_omx -lbinder -lui \
+  -lutils -lstagefright -lmedia -lstagefright_omx -lbinder -lui -lgui \
   -lhardware -lcutils \
+  $(DEPTH)/gfx/layers/$(LIB_PREFIX)layers.$(LIB_SUFFIX) \
+  $(DEPTH)/widget/gonk/nativewindow/$(LIB_PREFIX)nativewindow.$(LIB_SUFFIX) \
   $(NULL)
 LOCAL_INCLUDES += \
   -I$(topsrcdir)/media/webrtc/trunk \

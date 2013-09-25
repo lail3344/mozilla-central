@@ -95,7 +95,7 @@ public:
 
   PrivateNetworkInterfaceList()
   {
-    int rv;
+    nsresult rv;
     mInterfaces.Clear();
     rv = PopulateInterfaces();
     if (!NS_SUCCEEDED(rv)) {
@@ -231,7 +231,6 @@ NS_IMETHODIMP PrivateNetworkInterfaceList::GetInterface(int32_t interfaceIndex,
 NS_IMETHODIMP PrivateNetworkInterfaceList::PopulateInterfaces()
 {
   struct ifconf ifc;
-  int status;
   int s = socket( AF_INET, SOCK_DGRAM, 0 );
   int len = MAXADDRS * sizeof(struct ifreq);
   int e;
@@ -275,8 +274,7 @@ NS_IMETHODIMP PrivateNetworkInterfaceList::PopulateInterfaces()
 
   close(s);
 
-  status = 0;
-  return status;
+  return NS_OK;
 }
 
 /* Implementation: nsINetworkInterfaceListService */
